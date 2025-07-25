@@ -1,9 +1,14 @@
+import d4rl
+import h5py
 import numpy as np
 import torch
 import collections
 
+from d4rl.offline_env import get_keys
+from tqdm import tqdm
 
-def qlearning_dataset(env, dataset=None, terminate_on_end=False, **kwargs):
+
+def qlearning_dataset(env, dataset=None, terminate_on_end=False, fraction=1, **kwargs):
     """
     Returns datasets formatted for use by standard Q-learning algorithms,
     with observations, actions, next_observations, rewards, and a terminal
@@ -28,6 +33,13 @@ def qlearning_dataset(env, dataset=None, terminate_on_end=False, **kwargs):
     """
     if dataset is None:
         dataset = env.get_dataset(**kwargs)
+        dataset_len = len(dataset['observations'])
+        new_dataset_len = int(dataset_len * fraction)
+        print("Using dataset of length: ", new_dataset_len)
+        keys = ['observations', 'actions', 'rewards', 'terminals', 'next_observations']
+        if 'timeouts' in dataset:
+            keys.append('timeouts')
+        dataset = {key: dataset[key][:new_dataset_len] for key in keys}
     
     has_next_obs = True if 'next_observations' in dataset.keys() else False
 

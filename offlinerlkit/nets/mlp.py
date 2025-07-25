@@ -1,9 +1,7 @@
-import numpy as np
 import torch
 import torch.nn as nn
 
-from torch.nn import functional as F
-from typing import Dict, List, Union, Tuple, Optional
+from typing import List, Union, Tuple, Optional
 
 
 class MLP(nn.Module):

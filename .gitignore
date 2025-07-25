@@ -8,3 +8,8 @@
 **/*.txt
 **/.vscode
 **/_log
+wandb/
+**/wandb
+**/results
+experiments.sh
+experiments.txt

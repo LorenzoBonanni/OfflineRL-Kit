@@ -18,8 +18,8 @@ class StandardScaler(object):
 
         Returns: None.
         """
-        self.mu = np.mean(data, axis=0, keepdims=True)
-        self.std = np.std(data, axis=0, keepdims=True)
+        self.mu = torch.mean(data, axis=0, keepdims=True)
+        self.std = torch.std(data, axis=0, keepdims=True)
         self.std[self.std < 1e-12] = 1.0
 
     def transform(self, data):
@@ -43,16 +43,16 @@ class StandardScaler(object):
         return self.std * data + self.mu
     
     def save_scaler(self, save_path):
-        mu_path = path.join(save_path, "mu.npy")
-        std_path = path.join(save_path, "std.npy")
-        np.save(mu_path, self.mu)
-        np.save(std_path, self.std)
-    
+        mu_path = path.join(save_path, "mu.pt")
+        std_path = path.join(save_path, "std.pt")
+        torch.save(self.mu, mu_path)
+        torch.save(self.std, std_path)
+
     def load_scaler(self, load_path):
-        mu_path = path.join(load_path, "mu.npy")
-        std_path = path.join(load_path, "std.npy")
-        self.mu = np.load(mu_path)
-        self.std = np.load(std_path)
+        mu_path = path.join(load_path, "mu.pt")
+        std_path = path.join(load_path, "std.pt")
+        self.mu = torch.load(mu_path)
+        self.std = torch.load(std_path)
 
     def transform_tensor(self, data: torch.Tensor):
         device = data.device

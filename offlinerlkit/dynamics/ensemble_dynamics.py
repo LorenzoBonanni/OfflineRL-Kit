@@ -7,7 +7,7 @@ from typing import Callable, List, Tuple, Dict, Optional
 from offlinerlkit.dynamics import BaseDynamics
 from offlinerlkit.utils.scaler import StandardScaler
 from offlinerlkit.utils.logger import Logger
-
+from torch.cuda.amp import GradScaler, autocast
 
 class EnsembleDynamics(BaseDynamics):
     def __init__(
@@ -24,6 +24,7 @@ class EnsembleDynamics(BaseDynamics):
         self.terminal_fn = terminal_fn
         self._penalty_coef = penalty_coef
         self._uncertainty_mode = uncertainty_mode
+        self.grad_scaler = GradScaler()
 
     @ torch.no_grad()
     def step(
@@ -93,14 +94,16 @@ class EnsembleDynamics(BaseDynamics):
         next_obss = samples[..., :-1]
         return next_obss
 
-    def format_samples_for_training(self, data: Dict) -> Tuple[np.ndarray, np.ndarray]:
+    def format_samples_for_training(self, data: Dict) -> Tuple[torch.Tensor, torch.Tensor]:
         obss = data["observations"]
         actions = data["actions"]
         next_obss = data["next_observations"]
         rewards = data["rewards"]
+        
         delta_obss = next_obss - obss
-        inputs = np.concatenate((obss, actions), axis=-1)
-        targets = np.concatenate((delta_obss, rewards), axis=-1)
+        inputs = torch.cat((obss, actions), dim=-1)
+        targets = torch.cat((delta_obss, rewards), dim=-1)
+        
         return inputs, targets
 
     def train(
@@ -114,10 +117,12 @@ class EnsembleDynamics(BaseDynamics):
         logvar_loss_coef: float = 0.01
     ) -> None:
         inputs, targets = self.format_samples_for_training(data)
+        
         data_size = inputs.shape[0]
         holdout_size = min(int(data_size * holdout_ratio), 1000)
         train_size = data_size - holdout_size
         train_splits, holdout_splits = torch.utils.data.random_split(range(data_size), (train_size, holdout_size))
+        
         train_inputs, train_targets = inputs[train_splits.indices], targets[train_splits.indices]
         holdout_inputs, holdout_targets = inputs[holdout_splits.indices], targets[holdout_splits.indices]
 
@@ -126,17 +131,31 @@ class EnsembleDynamics(BaseDynamics):
         holdout_inputs = self.scaler.transform(holdout_inputs)
         holdout_losses = [1e10 for i in range(self.model.num_ensemble)]
 
-        data_idxes = np.random.randint(train_size, size=[self.model.num_ensemble, train_size])
+        data_idxes = torch.randint(
+            train_size,
+            size=(self.model.num_ensemble, train_size),
+            device=train_inputs.device
+        )
         def shuffle_rows(arr):
-            idxes = np.argsort(np.random.uniform(size=arr.shape), axis=-1)
-            return arr[np.arange(arr.shape[0])[:, None], idxes]
+            # idxes = torch.argsort(torch.rand(arr.shape), dim=-1)
+            # return arr[torch.arange(arr.shape[0])[:, None], idxes]
+            idxes = torch.argsort(torch.rand(*arr.shape, device=arr.device), dim=-1)
+            return arr.gather(1, idxes)
 
         epoch = 0
         cnt = 0
         logger.log("Training dynamics:")
+
+
         while True:
             epoch += 1
-            train_loss = self.learn(train_inputs[data_idxes], train_targets[data_idxes], batch_size, logvar_loss_coef)
+            train_loss = self.learn(
+                train_inputs[data_idxes], 
+                train_targets[data_idxes], 
+                batch_size, 
+                logvar_loss_coef
+            )
+
             new_holdout_losses = self.validate(holdout_inputs, holdout_targets)
             holdout_loss = (np.sort(new_holdout_losses)[:self.model.num_elites]).mean()
             logger.logkv("loss/dynamics_train_loss", train_loss)
@@ -170,10 +189,36 @@ class EnsembleDynamics(BaseDynamics):
         self.model.eval()
         logger.log("elites:{} , holdout loss: {}".format(indexes, (np.sort(holdout_losses)[:self.model.num_elites]).mean()))
     
+    def _compute_loss(
+        self, 
+        mean: torch.Tensor, 
+        logvar: torch.Tensor, 
+        targets: torch.Tensor, 
+        logvar_loss_coef: float
+    ) -> torch.Tensor:
+        """
+        Optimized loss computation with numerical stability improvements
+        """
+        inv_var = torch.exp(-logvar)
+        
+        # Compute MSE loss with inverse variance weighting
+        mse_loss_inv = (torch.pow(mean - targets, 2) * inv_var).mean(dim=(1, 2))
+        var_loss = logvar.mean(dim=(1, 2))
+        
+        # Sum over ensemble dimension
+        loss = mse_loss_inv.sum() + var_loss.sum()
+        
+        # Add regularization terms
+        loss = loss + self.model.get_decay_loss()
+        loss = loss + logvar_loss_coef * (
+            self.model.max_logvar.sum() - self.model.min_logvar.sum()
+        )
+        return loss
+
     def learn(
         self,
-        inputs: np.ndarray,
-        targets: np.ndarray,
+        inputs: torch.Tensor,
+        targets: torch.Tensor,
         batch_size: int = 256,
         logvar_loss_coef: float = 0.01
     ) -> float:
@@ -184,20 +229,17 @@ class EnsembleDynamics(BaseDynamics):
         for batch_num in range(int(np.ceil(train_size / batch_size))):
             inputs_batch = inputs[:, batch_num * batch_size:(batch_num + 1) * batch_size]
             targets_batch = targets[:, batch_num * batch_size:(batch_num + 1) * batch_size]
-            targets_batch = torch.as_tensor(targets_batch).to(self.model.device)
             
-            mean, logvar = self.model(inputs_batch)
-            inv_var = torch.exp(-logvar)
-            # Average over batch and dim, sum over ensembles.
-            mse_loss_inv = (torch.pow(mean - targets_batch, 2) * inv_var).mean(dim=(1, 2))
-            var_loss = logvar.mean(dim=(1, 2))
-            loss = mse_loss_inv.sum() + var_loss.sum()
-            loss = loss + self.model.get_decay_loss()
-            loss = loss + logvar_loss_coef * self.model.max_logvar.sum() - logvar_loss_coef * self.model.min_logvar.sum()
+            with autocast():
+                mean, logvar = self.model(inputs_batch)
+                loss = self._compute_loss(mean, logvar, targets_batch, logvar_loss_coef)
 
-            self.optim.zero_grad()
-            loss.backward()
-            self.optim.step()
+            # Mixed precision backward pass
+            
+            self.grad_scaler.scale(loss).backward()
+            self.grad_scaler.step(self.optim)
+            self.grad_scaler.update()
+            self.optim.zero_grad(set_to_none=True)
 
             losses.append(loss.item())
         return np.mean(losses)
@@ -205,11 +247,11 @@ class EnsembleDynamics(BaseDynamics):
     @ torch.no_grad()
     def validate(self, inputs: np.ndarray, targets: np.ndarray) -> List[float]:
         self.model.eval()
-        targets = torch.as_tensor(targets).to(self.model.device)
+
         mean, _ = self.model(inputs)
         loss = ((mean - targets) ** 2).mean(dim=(1, 2))
-        val_loss = list(loss.cpu().numpy())
-        return val_loss
+
+        return loss.cpu().numpy().tolist()
     
     def select_elites(self, metrics: List) -> List[int]:
         pairs = [(metric, index) for metric, index in zip(metrics, range(len(metrics)))]

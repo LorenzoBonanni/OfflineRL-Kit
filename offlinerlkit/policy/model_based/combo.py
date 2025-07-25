@@ -66,7 +66,7 @@ class COMBOPolicy(CQLPolicy):
 
     def rollout(
         self,
-        init_obss: np.ndarray,
+        init_obss: torch.Tensor,
         rollout_length: int
     ) -> Tuple[Dict[str, np.ndarray], Dict]:
 

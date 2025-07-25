@@ -1,43 +1,31 @@
 import argparse
 import os
+import sys
 import random
-import datetime
-import warnings
 
 import gym
-import d4rl
-import time
+
 import numpy as np
 import torch
-import wandb
+import ray
+from ray import tune
+import d4rl
+
+
 
 from offlinerlkit.nets import MLP
 from offlinerlkit.modules import ActorProb, Critic, TanhDiagGaussian, EnsembleDynamicsModel
 from offlinerlkit.dynamics import EnsembleDynamics
+from offlinerlkit.policy.model_based.combo import COMBOPolicy
 from offlinerlkit.utils.scaler import StandardScaler
 from offlinerlkit.utils.termination_fns import get_termination_fn
 from offlinerlkit.utils.load_dataset import qlearning_dataset
 from offlinerlkit.buffer import ReplayBuffer
 from offlinerlkit.utils.logger import Logger, make_log_dirs
 from offlinerlkit.policy_trainer import MBPolicyTrainer
-from offlinerlkit.policy import COMBOPolicy
+from offlinerlkit.policy import MOPOPolicy
 from utils import CustomDatasetWrapper
 
-warnings.filterwarnings("ignore")
-
-"""
-suggested hypers
-
-halfcheetah-medium-v2: rollout-length=5, cql-weight=0.5
-hopper-medium-v2: rollout-length=5, cql-weight=5.0
-walker2d-medium-v2: rollout-length=1, cql-weight=5.0
-halfcheetah-medium-replay-v2: rollout-length=5, cql-weight=0.5
-hopper-medium-replay-v2: rollout-length=5, cql-weight=0.5
-walker2d-medium-replay-v2: rollout-length=1, cql-weight=0.5
-halfcheetah-medium-expert-v2: rollout-length=5, cql-weight=5.0
-hopper-medium-expert-v2: rollout-length=5, cql-weight=5.0
-walker2d-medium-expert-v2: rollout-length=1, cql-weight=5.0
-"""
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -87,108 +75,100 @@ def get_args():
     return parser.parse_args()
 
 
-def train(args=get_args()):
+
+def run_exp(args_for_exp):
+    # set config
+    global args
+    args_for_exp = vars(args)
+    for k, v in config.items():
+        args_for_exp[k] = v
+    args_for_exp = argparse.Namespace(**args_for_exp)
+
     # create env and dataset
-    if 'custom' in args.task:
+    if 'custom' in args_for_exp.task:
         name_dict = {
             'halfcheetah_custom': ('HalfCheetah-v2', 'halfcheetah-medium-v2'),
         }
 
-        env_name, d4rl_name = name_dict[args.task]
+        env_name, d4rl_name = name_dict[args_for_exp.task]
         env = gym.make(env_name)
         env = CustomDatasetWrapper(
             env,
-            f'{os.environ.get("D4RL_DATASET_DIR")}/datasets/{args.task}_dataset.hdf5',
+            f'{os.environ.get("D4RL_DATASET_DIR")}/datasets/{args_for_exp.task}_dataset.hdf5',
             d4rl_name
         )
     else:
-        env = gym.make(args.task)
-    """
-    Here we use our own implementation of qlearning_dataset for mbrl algos.
-    This is because for the d4rl.qlearning_dataset, it will take the obs[i+1] as the next obs,
-    which though has no effect for q learning but leads bug for dynamics learning.
-    However, I can only ensure our new implementation works well on Mujoco. I don't test it on other tasks like Antmaze.
-    Therefore, I suggest you to use the original impl if you run those tasks.
-    """
-    wandb.init(
-        project="offline_rl_algo",
-        sync_tensorboard=True,
-        name=f"{args.algo_name}_{args.task}_{args.seed}_{args.fraction}_{datetime.datetime.today().strftime('%Y/%m/%d_%H:%M:%S')}",
-        config=vars(args)
-    )
-    if 'hopper' in args.task or 'halfcheetah' in args.task or 'walker2d' in args.task:
-        dataset = qlearning_dataset(env, fraction=args.fraction)
-    else:
-        dataset = d4rl.qlearning_dataset(env)
-    args.obs_shape = env.observation_space.shape
-    args.action_dim = np.prod(env.action_space.shape)
-    args.max_action = env.action_space.high[0]
+        env = gym.make(args_for_exp.task)
+
 
     # seed
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
+    random.seed(args_for_exp.seed)
+    np.random.seed(args_for_exp.seed)
+    torch.manual_seed(args_for_exp.seed)
+    torch.cuda.manual_seed_all(args_for_exp.seed)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
-    env.seed(args.seed)
+    env.seed(args_for_exp.seed)
 
     # create policy model
-    actor_backbone = MLP(input_dim=np.prod(args.obs_shape), hidden_dims=args.hidden_dims)
-    critic1_backbone = MLP(input_dim=np.prod(args.obs_shape) + args.action_dim, hidden_dims=args.hidden_dims)
-    critic2_backbone = MLP(input_dim=np.prod(args.obs_shape) + args.action_dim, hidden_dims=args.hidden_dims)
+    actor_backbone = MLP(input_dim=np.prod(args_for_exp.obs_shape), hidden_dims=args_for_exp.hidden_dims)
+    critic1_backbone = MLP(input_dim=np.prod(args_for_exp.obs_shape) + args_for_exp.action_dim, hidden_dims=args_for_exp.hidden_dims)
+    critic2_backbone = MLP(input_dim=np.prod(args_for_exp.obs_shape) + args_for_exp.action_dim, hidden_dims=args_for_exp.hidden_dims)
     dist = TanhDiagGaussian(
         latent_dim=getattr(actor_backbone, "output_dim"),
-        output_dim=args.action_dim,
+        output_dim=args_for_exp.action_dim,
         unbounded=True,
         conditioned_sigma=True,
-        max_mu=args.max_action
+        max_mu=args_for_exp.max_action
     )
-    actor = ActorProb(actor_backbone, dist, args.device)
-    critic1 = Critic(critic1_backbone, args.device)
-    critic2 = Critic(critic2_backbone, args.device)
-    actor_optim = torch.optim.Adam(actor.parameters(), lr=args.actor_lr)
-    critic1_optim = torch.optim.Adam(critic1.parameters(), lr=args.critic_lr)
-    critic2_optim = torch.optim.Adam(critic2.parameters(), lr=args.critic_lr)
+    actor = ActorProb(actor_backbone, dist, args_for_exp.device)
+    critic1 = Critic(critic1_backbone, args_for_exp.device)
+    critic2 = Critic(critic2_backbone, args_for_exp.device)
+    actor_optim = torch.optim.Adam(actor.parameters(), lr=args_for_exp.actor_lr)
+    critic1_optim = torch.optim.Adam(critic1.parameters(), lr=args_for_exp.critic_lr)
+    critic2_optim = torch.optim.Adam(critic2.parameters(), lr=args_for_exp.critic_lr)
 
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(actor_optim, args.epoch)
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(actor_optim, args_for_exp.epoch)
 
-    if args.auto_alpha:
-        target_entropy = args.target_entropy if args.target_entropy \
+
+    if args_for_exp.auto_alpha:
+        target_entropy = args_for_exp.target_entropy if args_for_exp.target_entropy \
             else -np.prod(env.action_space.shape)
-        args.target_entropy = target_entropy
-        log_alpha = torch.zeros(1, requires_grad=True, device=args.device)
-        alpha_optim = torch.optim.Adam([log_alpha], lr=args.alpha_lr)
+
+        args_for_exp.target_entropy = target_entropy
+
+        log_alpha = torch.zeros(1, requires_grad=True, device=args_for_exp.device)
+        alpha_optim = torch.optim.Adam([log_alpha], lr=args_for_exp.alpha_lr)
         alpha = (target_entropy, log_alpha, alpha_optim)
     else:
-        alpha = args.alpha
+        alpha = args_for_exp.alpha
 
     # create dynamics
-    load_dynamics_model = True if args.load_dynamics_path else False
+    load_dynamics_model = True if args_for_exp.load_dynamics_path else False
     dynamics_model = EnsembleDynamicsModel(
-        obs_dim=np.prod(args.obs_shape),
-        action_dim=args.action_dim,
-        hidden_dims=args.dynamics_hidden_dims,
-        num_ensemble=args.n_ensemble,
-        num_elites=args.n_elites,
-        weight_decays=args.dynamics_weight_decay,
-        device=args.device
+        obs_dim=np.prod(args_for_exp.obs_shape),
+        action_dim=args_for_exp.action_dim,
+        hidden_dims=args_for_exp.dynamics_hidden_dims,
+        num_ensemble=args_for_exp.n_ensemble,
+        num_elites=args_for_exp.n_elites,
+        weight_decays=args_for_exp.dynamics_weight_decay,
+        device=args_for_exp.device
     )
     dynamics_optim = torch.optim.Adam(
         dynamics_model.parameters(),
-        lr=args.dynamics_lr
+        lr=args_for_exp.dynamics_lr
     )
     scaler = StandardScaler()
-    termination_fn = get_termination_fn(task=args.task)
+    termination_fn = get_termination_fn(task=args_for_exp.task)
     dynamics = EnsembleDynamics(
         dynamics_model,
         dynamics_optim,
         scaler,
-        termination_fn
+        termination_fn,
+        penalty_coef=args_for_exp.penalty_coef
     )
 
-    if args.load_dynamics_path:
-        dynamics.load(args.load_dynamics_path)
+    if args_for_exp.load_dynamics_path:
+        dynamics.load(args_for_exp.load_dynamics_path)
 
     # create policy
     policy = COMBOPolicy(
@@ -218,24 +198,33 @@ def train(args=get_args()):
     # create buffer
     real_buffer = ReplayBuffer(
         buffer_size=len(dataset["observations"]),
-        obs_shape=args.obs_shape,
+        obs_shape=args_for_exp.obs_shape,
         obs_dtype=torch.float32,
-        action_dim=args.action_dim,
+        action_dim=args_for_exp.action_dim,
         action_dtype=torch.float32,
-        device=args.device
+        device=args_for_exp.device
     )
     real_buffer.load_dataset(dataset)
     fake_buffer = ReplayBuffer(
-        buffer_size=args.rollout_batch_size*args.rollout_length*args.model_retain_epochs,
-        obs_shape=args.obs_shape,
+        buffer_size=args_for_exp.rollout_batch_size*args_for_exp.rollout_length*args_for_exp.model_retain_epochs,
+        obs_shape=args_for_exp.obs_shape,
         obs_dtype=torch.float32,
-        action_dim=args.action_dim,
+        action_dim=args_for_exp.action_dim,
         action_dtype=torch.float32,
-        device=args.device
+        device=args_for_exp.device
     )
 
     # log
-    log_dirs = make_log_dirs(args.task, args.algo_name, args.seed, vars(args), ['fraction'])
+    record_params = list(config.keys())
+    if "seed" in record_params:
+        record_params.remove("seed")
+    log_dirs = make_log_dirs(
+        args_for_exp.task,
+        args_for_exp.algo_name,
+        args_for_exp.seed,
+        vars(args_for_exp),
+        record_params=record_params
+    )
     # key: output file name, value: output handler type
     output_config = {
         "consoleout_backup": "stdout",
@@ -244,7 +233,7 @@ def train(args=get_args()):
         "tb": "tensorboard"
     }
     logger = Logger(log_dirs, output_config)
-    logger.log_hyperparameters(vars(args))
+    logger.log_hyperparameters(vars(args_for_exp))
 
     # create policy trainer
     policy_trainer = MBPolicyTrainer(
@@ -253,31 +242,38 @@ def train(args=get_args()):
         real_buffer=real_buffer,
         fake_buffer=fake_buffer,
         logger=logger,
-        rollout_setting=(args.rollout_freq, args.rollout_batch_size, args.rollout_length),
-        epoch=args.epoch,
-        step_per_epoch=args.step_per_epoch,
-        batch_size=args.batch_size,
-        real_ratio=args.real_ratio,
-        eval_episodes=args.eval_episodes,
-        lr_scheduler=lr_scheduler
+        rollout_setting=(args_for_exp.rollout_freq, args_for_exp.rollout_batch_size, args_for_exp.rollout_length),
+        epoch=args_for_exp.epoch,
+        step_per_epoch=args_for_exp.step_per_epoch,
+        batch_size=args_for_exp.batch_size,
+        real_ratio=args_for_exp.real_ratio,
+        eval_episodes=args_for_exp.eval_episodes
     )
 
     # train
-    start_time = time.time()
     if not load_dynamics_model:
-        dynamics.train(real_buffer.sample_all(), logger, max_epochs_since_update=5)
-    print(f"Training dynamics took {time.time() - start_time:.2f} seconds")
-    exit(0)
-    policy_trainer.train()
-    policy_trainer._eval_episodes = 100
-    performance = policy_trainer._evaluate()
-    mean_reward = np.mean(performance["eval/episode_reward"])
-
-    d4rl_score = env.get_normalized_score(mean_reward)
-    logger.logkv('eval/d4rl_score', d4rl_score)
-    logger.dumpkvs()
-    logger.close()
+        dynamics.train(real_buffer.sample_all(), logger)
+    
+    result = policy_trainer.train()
+    tune.report(**result)
 
 
 if __name__ == "__main__":
-    train()
+    ray.init()
+    # load default args
+    args = get_args()
+
+    config = {}
+    seeds = list(range(3))
+    config["rollout_length"] = tune.grid_search([1, 5])
+    config["penalty_coef"] = tune.grid_search([0.5, 1.0, 5.0])
+    config["seed"] = tune.grid_search(seeds)
+
+    analysis = tune.run(
+        run_exp,
+        name="tune_mopo",
+        config=config,
+        resources_per_trial={
+            "gpu": 0.5
+        }
+    )

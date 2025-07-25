@@ -61,7 +61,7 @@ class MBPolicyTrainer:
             pbar = tqdm(range(self._step_per_epoch), desc=f"Epoch #{e}/{self._epoch}")
             for it in pbar:
                 if num_timesteps % self._rollout_freq == 0:
-                    init_obss = self.real_buffer.sample(self._rollout_batch_size)["observations"].cpu().numpy()
+                    init_obss = self.real_buffer.sample(self._rollout_batch_size)["observations"]
                     rollout_transitions, rollout_info = self.policy.rollout(init_obss, self._rollout_length)
                     self.fake_buffer.add_batch(**rollout_transitions)
                     self.logger.log(
@@ -113,7 +113,7 @@ class MBPolicyTrainer:
         self.logger.log("total time: {:.2f}s".format(time.time() - start_time))
         torch.save(self.policy.state_dict(), os.path.join(self.logger.model_dir, "policy.pth"))
         self.policy.dynamics.save(self.logger.model_dir)
-        self.logger.close()
+        # self.logger.close()
     
         return {"last_10_performance": np.mean(last_10_performance)}
 
