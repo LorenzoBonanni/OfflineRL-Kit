@@ -1,4 +1,5 @@
 import argparse
+import os
 import random
 
 import gym
@@ -6,6 +7,7 @@ import d4rl
 
 import numpy as np
 import torch
+import wandb
 
 
 from offlinerlkit.nets import MLP
@@ -14,7 +16,9 @@ from offlinerlkit.buffer import ReplayBuffer
 from offlinerlkit.utils.logger import Logger, make_log_dirs
 from offlinerlkit.policy_trainer import MFPolicyTrainer
 from offlinerlkit.policy import BCPolicy
-
+from utils import CustomDatasetWrapper, run_evaluation
+import pandas as pd
+import torch.package.package_exporter as package
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -30,11 +34,34 @@ def get_args():
 
     return parser.parse_args()
 
-
 def train(args=get_args()):
+    wandb.init(
+        project="offlinerlkit", 
+        sync_tensorboard=True,
+        config={'args': args.__dict__}
+    )
+
+    ntrj = None  # to keep track of number of trajectories if custom dataset is used
     # create env and dataset
-    env = gym.make(args.task)
-    dataset = d4rl.qlearning_dataset(env)
+    if 'custom' in args.task:
+        name_dict = {
+            'pendulum_custom-v1': ('Pendulum-v1', 'pendulum-medium-v1'),
+            'hopper_custom-v2': ('Hopper-v2', 'hopper-medium-v2')
+        }
+        name, ntrj = args.task.split('#')
+        env_name, d4rl_name = name_dict[name]
+        env = gym.make(env_name)
+        env = CustomDatasetWrapper(
+            env,
+            f'{os.environ.get("D4RL_DATASET_DIR")}/datasets/{name}_dataset_{ntrj}.hdf5',
+            d4rl_name
+        )
+        dataset = env.get_dataset()
+        args.task = env_name
+    else:
+        env = gym.make(args.task)
+        dataset = d4rl.qlearning_dataset(env)
+        
     args.obs_shape = env.observation_space.shape
     args.action_dim = np.prod(env.action_space.shape)
     args.max_action = env.action_space.high[0]
@@ -92,6 +119,21 @@ def train(args=get_args()):
     # train
     policy_trainer.train()
 
+    # final evaluation
+    avg_return, returns = run_evaluation(
+        actor, 
+        args.task, 
+        args.device, 
+        num_eval_episodes=50
+    )
+
+    # save returns to CSV using pandas
+    RESULTS_DIR = os.path.expandvars("$MOREL_OUTPUT_DIR")
+    algo_name = 'behavior-cloning'
+    out_fname = f"{algo_name}-returns_{ntrj}.csv"
+    df = pd.DataFrame({"return": np.asarray(returns)})
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    df.to_csv(RESULTS_DIR +'/'+ out_fname, index=False)
 
 if __name__ == "__main__":
     train()

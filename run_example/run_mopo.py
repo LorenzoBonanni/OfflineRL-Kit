@@ -8,6 +8,7 @@ import d4rl
 
 import numpy as np
 import torch
+import wandb
 
 
 from offlinerlkit.nets import MLP
@@ -20,6 +21,7 @@ from offlinerlkit.buffer import ReplayBuffer
 from offlinerlkit.utils.logger import Logger, make_log_dirs
 from offlinerlkit.policy_trainer import MBPolicyTrainer
 from offlinerlkit.policy import MOPOPolicy
+from utils import CustomDatasetWrapper, run_evaluation
 
 
 """
@@ -76,7 +78,31 @@ def get_args():
 
 def train(args=get_args()):
     # create env and dataset
-    env = gym.make(args.task)
+    wandb.init(
+        project="offlinerlkit", 
+        sync_tensorboard=True,
+        config={'args': args.__dict__}
+    )
+
+    # create env and dataset
+    if 'custom' in args.task:
+        name_dict = {
+            'pendulum_custom-v1': ('Pendulum-v1', 'pendulum-medium-v1'),
+            'hopper_custom-v2': ('Hopper-v2', 'hopper-medium-v2')
+        }
+        env_name, d4rl_name = name_dict[args.task]
+        env = gym.make(env_name)
+        env = CustomDatasetWrapper(
+            env,
+            f'{os.environ.get("D4RL_DATASET_DIR")}/datasets/{args.task}_dataset.hdf5',
+            d4rl_name
+        )
+        dataset = env.get_dataset()
+        args.task = d4rl_name
+    else:
+        env = gym.make(args.task)
+        dataset = d4rl.qlearning_dataset(env)
+
     """
     Here we use our own implementation of qlearning_dataset for mbrl algos.
     This is because for the d4rl.qlearning_dataset, it will take the obs[i+1] as the next obs,
@@ -84,10 +110,6 @@ def train(args=get_args()):
     However, I can only ensure our new implementation works well on Mujoco. I don't test it on other tasks like Antmaze.
     Therefore, I suggest you to use the original impl if you run those tasks.
     """
-    if 'hopper' in args.task or 'halfcheetah' in args.task or 'walker2d' in args.task:
-        dataset = qlearning_dataset(env)
-    else:
-        dataset = d4rl.qlearning_dataset(env)
     args.obs_shape = env.observation_space.shape
     args.action_dim = np.prod(env.action_space.shape)
     args.max_action = env.action_space.high[0]
@@ -227,6 +249,14 @@ def train(args=get_args()):
     
     policy_trainer.train()
 
+    # final evaluation
+    avg_return, returns = run_evaluation(
+        actor, 
+        args.task,
+        args.device, 
+        num_eval_episodes=10
+    )
 
 if __name__ == "__main__":
     train()
+    

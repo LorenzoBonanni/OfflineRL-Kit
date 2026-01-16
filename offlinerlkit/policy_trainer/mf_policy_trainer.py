@@ -71,6 +71,8 @@ class MFPolicyTrainer:
             last_10_performance.append(norm_ep_rew_mean)
             self.logger.logkv("eval/normalized_episode_reward", norm_ep_rew_mean)
             self.logger.logkv("eval/normalized_episode_reward_std", norm_ep_rew_std)
+            self.logger.logkv("eval/unnormalized_episode_reward", ep_reward_mean)
+            self.logger.logkv("eval/unnormalized_episode_reward_std", ep_reward_std)
             self.logger.logkv("eval/episode_length", ep_length_mean)
             self.logger.logkv("eval/episode_length_std", ep_length_std)
             self.logger.set_timestep(num_timesteps)

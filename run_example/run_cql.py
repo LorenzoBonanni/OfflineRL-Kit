@@ -1,11 +1,15 @@
 import argparse
+from copy import deepcopy
+import os
 import random
 
 import gym
 import d4rl
 
 import numpy as np
+import pandas as pd
 import torch
+import wandb
 
 
 from offlinerlkit.nets import MLP
@@ -14,6 +18,7 @@ from offlinerlkit.buffer import ReplayBuffer
 from offlinerlkit.utils.logger import Logger, make_log_dirs
 from offlinerlkit.policy_trainer import MFPolicyTrainer
 from offlinerlkit.policy import CQLPolicy
+from utils import CustomDatasetWrapper, run_evaluation, run_evaluation
 
 
 """
@@ -56,9 +61,33 @@ def get_args():
 
 
 def train(args=get_args()):
+    wandb.init(
+        project="offlinerlkit", 
+        sync_tensorboard=True,
+        config={'args': args.__dict__}
+    )
+
     # create env and dataset
-    env = gym.make(args.task)
-    dataset = d4rl.qlearning_dataset(env)
+    if 'custom' in args.task:
+        name_dict = {
+            'pendulum_custom-v1': ('Pendulum-v1', 'pendulum-medium-v1'),
+            'hopper_custom-v2': ('Hopper-v2', 'hopper-medium-v2')
+        }
+        name, ntrj = args.task.split('#')
+
+        env_name, d4rl_name = name_dict[name]
+        env = gym.make(env_name)
+        env = CustomDatasetWrapper(
+            env,
+            f'{os.environ.get("D4RL_DATASET_DIR")}/datasets/{name}_dataset_{ntrj}.hdf5',
+            d4rl_name
+        )
+        dataset = env.get_dataset()
+        args.task = env_name
+    else:
+        env = gym.make(args.task)
+        dataset = d4rl.qlearning_dataset(env)
+        
     # See https://github.com/aviralkumar2907/CQL/blob/master/d4rl/examples/cql_antmaze_new.py#L22
     if 'antmaze' in args.task:
         dataset["rewards"] = (dataset["rewards"] - 0.5) * 4.0
@@ -162,6 +191,23 @@ def train(args=get_args()):
 
     # train
     policy_trainer.train()
+
+    # final evaluation
+    avg_return, returns = run_evaluation(
+        actor, 
+        args.task, 
+        args.device, 
+        num_eval_episodes=50
+    )
+
+    # save returns to CSV using pandas
+    RESULTS_DIR = os.path.expandvars("$MOREL_OUTPUT_DIR")
+    algo_name = 'cql'
+    out_fname = f"{algo_name}-returns_{ntrj}.csv"
+    df = pd.DataFrame({"return": np.asarray(returns)})
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    df.to_csv(RESULTS_DIR +'/'+ out_fname, index=False)
+
 
 
 if __name__ == "__main__":

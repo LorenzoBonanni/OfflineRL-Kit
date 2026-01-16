@@ -6,7 +6,7 @@ import argparse
 import datetime
 import warnings
 import numpy as np
-
+import wandb
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional, Sequence, TextIO, Tuple, Union
 from tokenize import Number
@@ -288,6 +288,7 @@ class Logger(object):
         If called many times, last value will be used.
         """
         self._name2val[key] = val
+        wandb.log({key: val})
 
     def logkv_mean(self, key: Any, val: Number) -> None:
         """

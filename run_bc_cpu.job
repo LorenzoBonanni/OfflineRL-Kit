@@ -1,0 +1,11 @@
+#!/usr/bin/env bash 
+#SBATCH --job-name bc_offlinerlkit
+#SBATCH --mem 16G
+#SBATCH --cpus-per-task 8
+#SBATCH --partition normal
+source /home/lbonanni/miniconda3/etc/profile.d/conda.sh
+conda deactivate
+conda activate offlinerlkit_cpu
+cd /home/lbonanni/OfflineRL-Kit
+
+python run_example/run_bc.py --task hopper_custom-v2#2000 --seed 0
