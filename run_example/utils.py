@@ -37,9 +37,10 @@ class CustomDatasetWrapper(gym.Wrapper):
         return dataset
     
     def get_normalized_score(self, score):
-        ref_min_score = d4rl.infos.REF_MIN_SCORE[self.d4rl_name]
-        ref_max_score = d4rl.infos.REF_MAX_SCORE[self.d4rl_name]
-        return (score - ref_min_score) / (ref_max_score - ref_min_score)
+        # ref_min_score = d4rl.infos.REF_MIN_SCORE[self.d4rl_name]
+        # ref_max_score = d4rl.infos.REF_MAX_SCORE[self.d4rl_name]
+        # return (score - ref_min_score) / (ref_max_score - ref_min_score)
+        return score
 
 def run_evaluation(actor, env_id, device, num_eval_episodes=10, seed=42):
     actor.eval()

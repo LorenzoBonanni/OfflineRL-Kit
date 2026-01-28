@@ -46,7 +46,9 @@ def train(args=get_args()):
     if 'custom' in args.task:
         name_dict = {
             'pendulum_custom-v1': ('Pendulum-v1', 'pendulum-medium-v1'),
-            'hopper_custom-v2': ('Hopper-v2', 'hopper-medium-v2')
+            'hopper_custom-v2': ('Hopper-v2', 'hopper-medium-v2'),
+            'halfcheetah_custom-v2': ('HalfCheetah-v2', 'halfcheetah-medium-v2'),
+            'invertedpendulum_custom-v2': ('InvertedPendulum-v2', 'invertedpendulum-medium-v2')
         }
         name, ntrj = args.task.split('#')
         env_name, d4rl_name = name_dict[name]

@@ -8,4 +8,4 @@ conda deactivate
 conda activate offlinerlkit_cpu
 cd /home/lbonanni/OfflineRL-Kit
 
-python run_example/run_bc.py --task hopper_custom-v2#2000 --seed 0
+python run_example/run_bc.py --task halfcheetah_custom-v2#5000_0 --seed 0
