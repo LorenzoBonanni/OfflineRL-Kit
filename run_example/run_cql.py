@@ -68,6 +68,8 @@ def train(args=get_args()):
     )
 
     # create env and dataset
+    name = ""
+    ntrj = ""
     if 'custom' in args.task:
         name_dict = {
             'pendulum_custom-v1': ('Pendulum-v1', 'pendulum-medium-v1'),
@@ -201,7 +203,7 @@ def train(args=get_args()):
     )
 
     # save returns to CSV using pandas
-    RESULTS_DIR = os.path.expandvars("$MOREL_OUTPUT_DIR")
+    RESULTS_DIR = os.path.expandvars("$MOREL_OUTPUT_DIR") + name.split('_')[0]
     algo_name = 'cql'
     out_fname = f"{algo_name}-returns_{ntrj}.csv"
     df = pd.DataFrame({"return": np.asarray(returns)})
