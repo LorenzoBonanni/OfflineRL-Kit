@@ -12,7 +12,7 @@ fi
 # --------------------------------------------------
 # 1. Working directory
 # --------------------------------------------------
-cd /workspaces/OfflineRL-Kit
+cd /workspace/OfflineRLKit
 
 # --------------------------------------------------
 # 2. Define environments, algorithms and seeds

@@ -4,6 +4,7 @@ import json
 import pprint
 import argparse
 import datetime
+import uuid
 import warnings
 import numpy as np
 import wandb
@@ -349,15 +350,19 @@ def make_log_dirs(
     algo_name: str,
     seed: int,
     args: Dict,
-    record_params: Optional[List]=None
+    record_params: Optional[List] = None
 ) -> str:
     if record_params is not None:
         for param_name in record_params:
             algo_name += f"&{param_name}={args[param_name]}"
-    timestamp = datetime.datetime.now().strftime("%y-%m%d-%H%M%S")
-    exp_name = f"seed_{seed}&timestamp_{timestamp}"
+    # microsecond resolution instead of second resolution
+    timestamp = datetime.datetime.now().strftime("%y-%m%d-%H%M%S-%f")
+    # PID + short random suffix: guarantees uniqueness even if two processes
+    # land on the exact same microsecond (e.g. different nodes)
+    unique = f"pid{os.getpid()}-{uuid.uuid4().hex[:6]}"
+    exp_name = f"seed_{seed}&timestamp_{timestamp}&{unique}"
     log_dirs = os.path.join(ROOT_DIR, task_name, algo_name, exp_name)
-    os.makedirs(log_dirs)
+    os.makedirs(log_dirs, exist_ok=False)
     return log_dirs
 
 

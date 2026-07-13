@@ -21,4 +21,4 @@
 #SBATCH --array=0-139
 
 
-srun --environment=offlinerl_kit /workspace/OfflineRLKit/run_array.sh
+srun --environment=offlinerlkit /workspace/OfflineRLKit/run_array.sh
