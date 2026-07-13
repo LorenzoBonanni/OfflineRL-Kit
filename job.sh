@@ -1,17 +1,24 @@
 #!/usr/local/bin/bash
-# Total experiments = num_envs(7) * num_seeds (20) * num_algos (2) = 7 * 20 * 2 = 280
-# Per array job: 20 srun tasks × 1 experiment each = 20 experiments
-# Array step = 20  →  indices 0, 20, 40, ..., 260  (14 array jobs total)
+# Total experiments = num_envs(28) * num_seeds(20) * num_algos(2) = 1120
+# Parallelism unit: 1 node = 4 GPUs (ntasks-per-node=4, 1 gpu per task)
+# Each GPU runs 2 experiments sequentially -> 4 * 2 = 8 experiments per array job
+# 1120 / 8 = 140 array jobs needed.
+#
+# Cluster MaxArraySize is 1000, so the array index itself must stay small.
+# Instead of stepping the Slurm index by 8 (which would reach 1112, over the
+# limit), the array index below is just a "chunk number" 0..139, and
+# run_array.sh multiplies it by 8 internally to get the real task_id range.
  
+
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=20
-#SBATCH --cpus-per-task=6
-#SBATCH --gpus-per-task=0
+#SBATCH --ntasks-per-node=4
+#SBATCH --cpus-per-task=10
+#SBATCH --gpus-per-task=1
 #SBATCH --mem-per-cpu=3G
 #SBATCH --partition=normal
 #SBATCH --job-name=offlinerlkit
-#SBATCH --time=24:00:00
-# 1120
-#SBATCH --array=0-1000:20
- 
-srun --environment=offlinerl_kit /workspace/OfflineRLKit/run_bc_array.job
+#SBATCH --time=12:00:00
+#SBATCH --array=0-139
+
+
+srun --environment=offlinerl_kit /workspace/OfflineRLKit/run_array.sh
