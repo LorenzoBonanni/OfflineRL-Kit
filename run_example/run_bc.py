@@ -42,15 +42,17 @@ def train(args=get_args()):
     )
 
     ntrj = None  # to keep track of number of trajectories if custom dataset is used
+    task_name = ""
     # create env and dataset
     if 'custom' in args.task:
         name_dict = {
-            'pendulum_custom-v1': ('Pendulum-v1', 'pendulum-medium-v1'),
             'hopper_custom-v2': ('Hopper-v2', 'hopper-medium-v2'),
             'halfcheetah_custom-v2': ('HalfCheetah-v2', 'halfcheetah-medium-v2'),
-            'invertedpendulum_custom-v2': ('InvertedPendulum-v2', 'invertedpendulum-medium-v2')
+            'invertedpendulum_custom-v2': ('InvertedPendulum-v2', 'invertedpendulum-medium-v2'),
+            'walker2d_custom-v2': ('Walker2d-v2', 'walker2d-medium-v2'),
         }
         name, ntrj = args.task.split('#')
+        task_name = name.split('_')[0]  # Extract the task name (e.g., 'hopper', 'halfcheetah', etc.)
         env_name, d4rl_name = name_dict[name]
         env = gym.make(env_name)
         env = CustomDatasetWrapper(
@@ -135,7 +137,8 @@ def train(args=get_args()):
     out_fname = f"{algo_name}-returns_{ntrj}.csv"
     df = pd.DataFrame({"return": np.asarray(returns)})
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    df.to_csv(RESULTS_DIR +'/'+ out_fname, index=False)
+    os.makedirs(RESULTS_DIR + '/' + task_name, exist_ok=True)
+    df.to_csv(RESULTS_DIR +'/'+ task_name  + '/' + out_fname, index=False)
 
 if __name__ == "__main__":
     train()

@@ -11,6 +11,7 @@
 #SBATCH --partition=normal
 #SBATCH --job-name=offlinerlkit
 #SBATCH --time=24:00:00
-#SBATCH --array=0-79:20
+# 1120
+#SBATCH --array=0-1000:20
  
 srun --environment=offlinerl_kit /workspace/OfflineRLKit/run_bc_array.job

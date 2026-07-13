@@ -20,14 +20,38 @@ cd /workspaces/OfflineRL-Kit
 # --------------------------------------------------
 envs=(
     "walker2d_custom-v2#10"
+    "walker2d_custom-v2#50"
+    "walker2d_custom-v2#100"
     "walker2d_custom-v2#500"
+    "walker2d_custom-v2#1000"
+    "walker2d_custom-v2#2000"
     "walker2d_custom-v2#5000"
+    "hopper_custom-v2#10"
+    "hopper_custom-v2#50"
+    "hopper_custom-v2#100"
+    "hopper_custom-v2#500"
+    "hopper_custom-v2#1000"
+    "hopper_custom-v2#2000"
+    "hopper_custom-v2#5000"
+    "halfcheetah_custom-v2#10"
+    "halfcheetah_custom-v2#50"
+    "halfcheetah_custom-v2#100"
+    "halfcheetah_custom-v2#500"
+    "halfcheetah_custom-v2#1000"
+    "halfcheetah_custom-v2#2000"
+    "halfcheetah_custom-v2#5000"
+    "invertedpendulum_custom-v2#10"
+    "invertedpendulum_custom-v2#50"
+    "invertedpendulum_custom-v2#100"
+    "invertedpendulum_custom-v2#500"
+    "invertedpendulum_custom-v2#1000"
+    "invertedpendulum_custom-v2#2000"
+    "invertedpendulum_custom-v2#5000"
 )
 
 algorithms=(
     "bc"
     "cql"
-    "combo"
 )
 
 seeds=(0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19)
@@ -45,13 +69,12 @@ seed_idx=$(( task_id % num_seeds ))
 
 export ENV_NAME=${envs[$env_idx]}_${seeds[$seed_idx]}
 export SEED=0
+export WANDB_MODE=offline
 
 if algorithms[$algo_idx] == "bc"; then
     export ALGORITHM_SCRIPT="run_bc.py"
 elif algorithms[$algo_idx] == "cql"; then
     export ALGORITHM_SCRIPT="run_cql.py"
-elif algorithms[$algo_idx] == "combo"; then
-    export ALGORITHM_SCRIPT="run_combo.py"
 else
     echo "Invalid algorithm selected."
     exit 1

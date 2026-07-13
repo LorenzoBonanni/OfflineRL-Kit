@@ -1,4 +1,5 @@
-FROM ubuntu:22.04
+# FROM ubuntu:22.04
+FROM nvidia/cuda:13.0.0-runtime-ubuntu22.04
 
 # =========================
 # Base environment
